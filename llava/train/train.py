@@ -39,6 +39,9 @@ from PIL import Image
 
 
 local_rank = None
+def is_redpajama_model_name(model_name):
+    model_name = model_name.lower()
+    return 'redpajama' in model_name or 'gpt-neox' in model_name
 
 
 def rank0_print(*args):
@@ -823,6 +826,17 @@ def train(attn_implementation=None):
                 cache_dir=training_args.cache_dir,
                 **bnb_model_from_pretrained_args
             )
+        elif is_redpajama_model_name(model_args.model_name_or_path):
+            config = transformers.AutoConfig.from_pretrained(model_args.model_name_or_path, trust_remote_code=True)
+            model = LlavaGptNeoXForCausalLM.from_pretrained(
+                model_args.model_name_or_path,
+                config=config,
+                cache_dir=training_args.cache_dir,
+                trust_remote_code=True,
+                attn_implementation=attn_implementation,
+                torch_dtype=(torch.bfloat16 if training_args.bf16 else None),
+                **bnb_model_from_pretrained_args
+            )
         else:
             model = LlavaLlamaForCausalLM.from_pretrained(
                 model_args.model_name_or_path,
@@ -832,13 +846,23 @@ def train(attn_implementation=None):
                 **bnb_model_from_pretrained_args
             )
     else:
-        model = transformers.LlamaForCausalLM.from_pretrained(
-            model_args.model_name_or_path,
+        model_load_kwargs = dict(
             cache_dir=training_args.cache_dir,
             attn_implementation=attn_implementation,
             torch_dtype=(torch.bfloat16 if training_args.bf16 else None),
             **bnb_model_from_pretrained_args
         )
+        if is_redpajama_model_name(model_args.model_name_or_path):
+            model = transformers.AutoModelForCausalLM.from_pretrained(
+                model_args.model_name_or_path,
+                trust_remote_code=True,
+                **model_load_kwargs
+            )
+        else:
+            model = transformers.LlamaForCausalLM.from_pretrained(
+                model_args.model_name_or_path,
+                **model_load_kwargs
+            )
     model.config.use_cache = False
 
     if model_args.freeze_backbone:
@@ -881,6 +905,15 @@ def train(attn_implementation=None):
             cache_dir=training_args.cache_dir,
             model_max_length=training_args.model_max_length,
             padding_side="right"
+        )
+    elif is_redpajama_model_name(model_args.model_name_or_path):
+        tokenizer = transformers.AutoTokenizer.from_pretrained(
+            model_args.model_name_or_path,
+            cache_dir=training_args.cache_dir,
+            model_max_length=training_args.model_max_length,
+            padding_side="right",
+            use_fast=True,
+            trust_remote_code=True,
         )
     else:
         tokenizer = transformers.AutoTokenizer.from_pretrained(
